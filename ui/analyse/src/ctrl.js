@@ -230,7 +230,7 @@ module.exports = function(opts) {
     initialize(data);
     this.vm.redirecting = false;
     this.setPath(treePath.root);
-    this.ceval.stop();
+    this.ceval.destroy();
     this.ceval = makeCeval();
   }.bind(this);
 
@@ -443,6 +443,29 @@ module.exports = function(opts) {
     this.setAutoShapes();
     this.startCeval();
     m.redraw();
+  }.bind(this);
+
+  var cevalReset = function(f) {
+    this.ceval.stop();
+    if (!this.ceval.enabled()) this.ceval.toggle();
+    this.startCeval();
+    m.redraw();
+  }.bind(this);
+
+  this.cevalSetMultiPv = function(v) {
+    this.ceval.multiPv(v);
+    this.tree.removeCeval();
+    cevalReset();
+  }.bind(this);
+
+  this.cevalSetThreads = function(v) {
+    this.ceval.threads(v);
+    cevalReset();
+  }.bind(this);
+
+  this.cevalSetHashSize = function(v) {
+    this.ceval.hashSize(v);
+    cevalReset();
   }.bind(this);
 
   this.showEvalGauge = function() {

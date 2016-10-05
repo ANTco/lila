@@ -2,27 +2,42 @@ var m = require('mithril');
 var makePool = require('./cevalPool');
 var dict = require('./cevalDict');
 var util = require('../util');
-var stockfishWorker = require('./stockfishWorker');
-var sunsetterWorker = require('./sunsetterWorker');
+var stockfishProtocol = require('./stockfishProtocol');
+var sunsetterProtocol = require('./sunsetterProtocol');
 
 module.exports = function(possible, variant, emit) {
 
   var instanceId = Math.random().toString(36).substring(2).slice(0, 4);
-  var nbWorkers = 3;
+  var pnaclSupported = navigator.mimeTypes['application/x-pnacl'];
   var minDepth = 7;
   var maxDepth = util.storedProp('ceval.max-depth', 18);
+  var multiPv = util.storedProp('ceval.multipv', 1);
+  var threads = util.storedProp('ceval.threads', Math.ceil((navigator.hardwareConcurrency || 1) / 2));
+  var hashSize = util.storedProp('ceval.hash-size', 128);
   var curDepth = 0;
-  var storageKey = 'client-eval-enabled';
+  var enableStorage = lichess.storage.make('client-eval-enabled');
   var allowed = m.prop(true);
-  var enabled = m.prop(possible() && allowed() && lichess.storage.get(storageKey) === '1');
+  var enabled = m.prop(possible() && allowed() && enableStorage.get() == '1');
   var started = false;
-  var engine = variant.key !== 'crazyhouse' ? stockfishWorker : sunsetterWorker;
 
-  var pool = makePool({
-    minDepth: minDepth,
-    maxDepth: maxDepth,
-    variant: variant
-  }, engine, nbWorkers);
+  var pool;
+  if (variant.key !== 'crazyhouse') {
+    pool = makePool(stockfishProtocol, {
+      asmjs: '/assets/vendor/stockfish.js/stockfish.js',
+      pnacl: pnaclSupported && '/assets/vendor/stockfish.pexe/nacl/stockfish.nmf'
+    }, {
+      minDepth: minDepth,
+      maxDepth: maxDepth,
+      variant: variant,
+      multiPv: multiPv,
+      threads: pnaclSupported && threads,
+      hashSize: pnaclSupported && hashSize
+    });
+  } else {
+    pool = makePool(sunsetterProtocol, {
+      asmjs: '/assets/vendor/Sunsetter/sunsetter.js'
+    });
+  }
 
   // adjusts maxDepth based on nodes per second
   var npsRecorder = (function() {
@@ -42,6 +57,9 @@ module.exports = function(possible, variant, emit) {
         if (knps > 150) depth = 20;
         if (knps > 200) depth = 21;
         if (knps > 250) depth = 22;
+        if (knps > 500) depth = 23;
+        if (knps > 800) depth = 24;
+        if (knps > 1500) depth = 25;
         maxDepth(depth);
         if (values.length > 20) values.shift();
       }
@@ -92,7 +110,7 @@ module.exports = function(possible, variant, emit) {
       }
     }
 
-    var dictRes = dict(work, variant);
+    var dictRes = dict(work, variant, multiPv());
     if (dictRes) {
       setTimeout(function() {
         // this has to be delayed, or it slows down analysis first render.
@@ -104,8 +122,7 @@ module.exports = function(possible, variant, emit) {
             best: dictRes.best,
             mate: 0,
             dict: true
-          },
-          name: name
+          }
         });
       }, 500);
       pool.warmup();
@@ -122,20 +139,25 @@ module.exports = function(possible, variant, emit) {
 
   return {
     instanceId: instanceId,
+    pnaclSupported: pnaclSupported,
     start: start,
     stop: stop,
     allowed: allowed,
     possible: possible,
     enabled: enabled,
+    multiPv: multiPv,
+    threads: threads,
+    hashSize: hashSize,
     toggle: function() {
       if (!possible() || !allowed()) return;
       stop();
       enabled(!enabled());
-      lichess.storage.set(storageKey, enabled() ? '1' : '0');
+      enableStorage.set(enabled() ? '1' : '0');
     },
     curDepth: function() {
       return curDepth;
     },
-    maxDepth: maxDepth
+    maxDepth: maxDepth,
+    destroy: pool.destroy
   };
 };
